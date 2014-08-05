@@ -1,29 +1,23 @@
-﻿// Generate a SQL script from the first worksheet of an Excel file
-// by Aaron W. West 
+// This can run as an fsx script; see ExcelToSQL.bat (no EXE required, but fsi.exe and FSharp.Core.dll must exist somewhere)
+
+// Generate a SQL script from a worksheet of an Excel file
+// by Aaron W. West, 5/31/2014
+
 // Usage: excelToSQL databaseName schemaName tableName infile.xls outfile.sql
-
-// This assumes the first sheet of the workbook contains a table with no blank columns
-// and the first column is the field names of the table   
-
-// You may need to convert some columns to all-strings for LinqToExcel to infer the correct type for the column
-
-// TODO: ??  check schema of destination table so that 
-// formatCell can use the type of the destination column
-// to determine how to format properly , and output an error to the user
-// if the SQL would be invalid (too long for destination column), 
-// and can avoid inserting NULL into NOT NULL columns
-
-// TODO: generate a suggested schema when no schema is given. 
-// TODO? optional Values, ...  format
-// TODO? Install-Package UnionArgParser
+// Name a sheet of the workbook *[tableName]* or *data* or Sheet1,
+// Make sure your ActiveRange has no blank columns (delete blank columns or rows if so),
+// Make sure the formatting of the cells is appropriate for the datatype
+// Make sure the first row contains field names for the table   
 
 // This uses:
 // https://code.google.com/p/linqtoexcel/
 // http://www.nuget.org/packages/LinqToExcel  ( Install-Package LinqToExcel )
-
+#if INTERACTIVE
 #I "..\packages\LinqToExcel.1.8.0\lib" //assembly search path
 #r "LinqToExcel.dll"
 #r "Remotion.Data.Linq.dll"
+#endif
+
 open System
 open LinqToExcel
 open LinqToExcel.Query
@@ -32,13 +26,14 @@ open LinqToExcel.Attributes
 open LinqToExcel.Domain
 
 let excelToSql databaseName schemaName tableName fn outfn =
-    let ci = System.Globalization.CultureInfo.CreateSpecificCulture("en-US")
-    let dtfi: System.Globalization.DateTimeFormatInfo = ci.DateTimeFormat
+    //let ci = System.Globalization.CultureInfo.CreateSpecificCulture("en-US")
+    //let dtfi: System.Globalization.DateTimeFormatInfo = ci.DateTimeFormat
     let fullTableName = sprintf "[%s].[%s].[%s]" databaseName schemaName tableName
     let excel = new ExcelQueryFactory(fn)   
     excel.DatabaseEngine <- DatabaseEngine.Ace
-    let worksheetNames = query { for wn in excel.GetWorksheetNames() do select wn.ToString }
-    let firstWorksheetName = worksheetNames |> Seq.take(1) |> Seq.exactlyOne  <| dtfi
+    let isDataSheet n = let nm = n.ToString().ToLower() in 
+                        nm.Contains(tableName) || nm.Contains("data") || nm.Equals("sheet1")
+    let firstWorksheetName = excel.GetWorksheetNames() |> Seq.where(isDataSheet) |> Seq.take(1) |> Seq.exactlyOne 
     let q = query { for row in excel.Worksheet(firstWorksheetName) do
                     select row }
     let colNames : string[] = excel.GetColumnNames (firstWorksheetName) |> Seq.toArray //<string>
@@ -53,7 +48,7 @@ let excelToSql databaseName schemaName tableName fn outfn =
         | :? System.DateTime -> sprintf "'%s'" <| v.ToString().Replace("'","''") 
         | :? System.Double   -> sprintf "%s" <| v.ToString()
         | :? System.DBNull   -> "NULL"  
-//      | :? System.Int32    -> sprintf "%s" <| v.ToString()
+//      | :? System.Int32    -> sprintf "%s" <| v.ToString() // Spreadsheets don't have Int32
         | _ -> raise(Exception("Error: Type=" + v.GetType().ToString() 
                                 + "???: Unknown type in formatCell")) 
     let formatRow (r:Row) = 
@@ -122,16 +117,14 @@ let doMain argv =
         | _ -> printfn "Usage: excelToSQL databaseName schemaName tableName infile.xls outfile.sql\n%s"
                         ", or substitute - for outfile.sql for stdout"
                exit(1)
-//    Console.WriteLine("press enter to exit")
-//    Console.Read() |> ignore
-    //0 // return an integer exit code
+    0 // return an integer exit code
 
 
 #if COMPILED
 [<EntryPoint>]
 let main argv = 
     doMain argv
-#else // #if INTERACTIVE
+#else
 
 // Three ways to run the program
 // Exe: simplest, actually. But it does require Fsharp.core.dll to be in the path, I think
@@ -157,5 +150,6 @@ let args = dropWhileStrings
             |> List.tail |> List.toArray
 printfn "args=%A" args
 doMain args  
+// or // excelToSql (args.[0]) (args.[1]) (args.[2]) (args.[3]) (args.[4]) 
 #endif
 
